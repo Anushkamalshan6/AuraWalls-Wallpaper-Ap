@@ -55,6 +55,8 @@ type Wallpaper = {
   live?: boolean;
 };
 
+const GOOGLE_DRIVE_API = "https://script.google.com/macros/s/AKfycbybvEroX0nMLaKNLoQq2Jp8TKvNYQkzwLWBmyG4wydijbUQ6sQjHM2dalEDpJs8COxM/exec";
+
 const categories: Category[] = [
   'AMOLED Deep Black',
   'Cyberpunk Neon',
@@ -157,6 +159,7 @@ function App() {
   const wallpaperQuery = useListWallpapers();
   const requestUpload = useRequestUploadUrl();
   const createWallpaper = useCreateWallpaper();
+  const [driveWallpapers, setDriveWallpapers] = useState<Wallpaper[]>([]);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Category | 'All'>('All');
   const [activeNav, setActiveNav] = useState<'Explore' | 'Saved' | 'Liked'>('Explore');
@@ -184,15 +187,28 @@ function App() {
   const audioRef = useRef<{ context: AudioContext; nodes: OscillatorNode[]; gain: GainNode } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
-  // මෙතැනදී Array.isArray පරීක්ෂාව යොදා crash වීම සම්පූර්ණයෙන්ම වළක්වා ඇත:
+  // Fetch wallpapers live from Google Drive
+  useEffect(() => {
+    fetch(GOOGLE_DRIVE_API)
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setDriveWallpapers(data);
+        }
+      })
+      .catch(() => {
+        // Silent catch: falls back safely to sample wallpapers
+      });
+  }, []);
+
   const allWallpapers = useMemo(() => {
     const apiData = Array.isArray(wallpaperQuery.data)
       ? wallpaperQuery.data
       : (wallpaperQuery.data && typeof wallpaperQuery.data === 'object' && Array.isArray((wallpaperQuery.data as any).data))
         ? (wallpaperQuery.data as any).data
         : [];
-    return [...apiData.map(uploadedWallpaper), ...sampleWallpapers];
-  }, [wallpaperQuery.data]);
+    return [...driveWallpapers, ...apiData.map(uploadedWallpaper), ...sampleWallpapers];
+  }, [driveWallpapers, wallpaperQuery.data]);
 
   useEffect(() => {
     try { localStorage.setItem('aurawalls-liked', JSON.stringify(liked)); } catch { /* Storage can be unavailable in private mode. */ }
