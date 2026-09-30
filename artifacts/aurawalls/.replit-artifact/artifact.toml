@@ -17,7 +17,7 @@ run = "pnpm --filter @workspace/aurawalls run dev"
 [services.production]
 build = [ "pnpm", "--filter", "@workspace/aurawalls", "run", "build" ]
 serve = "static"
-publicDir = "artifacts/aurawalls/dist/public"
+publicDir = "artifacts/aurawalls/dist"
 
 [[services.production.rewrites]]
 from = "/*"
