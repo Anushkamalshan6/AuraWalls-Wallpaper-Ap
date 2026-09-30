@@ -86,6 +86,7 @@ const sampleWallpapers: Wallpaper[] = [
 
 const allowedImageTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif'];
 const maxImageSize = 20 * 1024 * 1024;
+const monetizationUrl = 'https://www.profitableratecpmnetwork.com/eyhaa4uxg?key=00abad452ea59734f90edbfc094b9ed1';
 const uploadTypeByExtension: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -358,6 +359,14 @@ function App() {
       showToast('Wallpaper could not be reached. Try again in a moment.');
     };
     image.src = source;
+  };
+
+  const handleWallpaperDownload = () => {
+    window.open(monetizationUrl, '_blank', 'noopener,noreferrer');
+    showToast('Your high-quality wallpaper download starts in 3 seconds');
+    window.setTimeout(() => {
+      void downloadWallpaper();
+    }, 3000);
   };
 
   const clearFilters = () => {
@@ -880,10 +889,10 @@ function App() {
               </button>
               <p className="aw-audio-note" data-testid="text-audio-description">A soft, generative drone made in your browser. No audio files, no uploads.</p>
               <div className="aw-modal-actions">
-                <button className="aw-primary aw-download" onClick={() => void downloadWallpaper()} data-testid="button-download-wallpaper"><ArrowDownToLine size={15} /> Download 4K</button>
+                <button className="aw-primary aw-download" onClick={handleWallpaperDownload} data-testid="button-download-wallpaper"><ArrowDownToLine size={15} /> Download 4K</button>
                 <button className={`aw-save ${saved.includes(selected.id) ? 'is-on' : ''}`} aria-label={saved.includes(selected.id) ? 'Remove from saved' : 'Save wallpaper'} aria-pressed={saved.includes(selected.id)} onClick={() => toggleSaved(selected.id)} data-testid="button-save-preview"><Bookmark size={16} fill={saved.includes(selected.id) ? 'currentColor' : 'none'} /></button>
               </div>
-              <div className="aw-download-note" data-testid="text-download-details">Optimized for {aspect === 'phone' ? 'mobile' : aspect === 'desktop' ? 'desktop' : 'ultra-wide'} · Adjustments included in your download</div>
+              <div className="aw-download-note" data-testid="text-download-details">A new tab opens · download starts in 3 seconds · Optimized for {aspect === 'phone' ? 'mobile' : aspect === 'desktop' ? 'desktop' : 'ultra-wide'} · Adjustments included</div>
             </div>
           </section>
         </div>
