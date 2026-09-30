@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent } from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -6,17 +7,29 @@ import {
   Bookmark,
   Check,
   ChevronDown,
+  CloudUpload,
   Heart,
   Image as ImageIcon,
   Laptop,
+  LoaderCircle,
   Maximize2,
   Monitor,
   Palette,
   Search,
   Smartphone,
   Sparkles,
+  Upload,
   X,
 } from 'lucide-react';
+import { useAuth } from '@workspace/replit-auth-web';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  getListWallpapersQueryKey,
+  useCreateWallpaper,
+  useListWallpapers,
+  useRequestUploadUrl,
+} from '@workspace/api-client-react';
+import type { WallpaperItem } from '@workspace/api-client-react';
 
 type Category =
   | 'AMOLED Deep Black'
@@ -38,6 +51,7 @@ type Wallpaper = {
   color: string;
   swatch: string;
   keywords: string;
+  imageUrl?: string;
   live?: boolean;
 };
 
@@ -51,7 +65,7 @@ const categories: Category[] = [
   'Live Looping Visuals',
 ];
 
-const wallpapers: Wallpaper[] = [
+const sampleWallpapers: Wallpaper[] = [
   { id: 'after-hours', title: 'After Hours', category: 'Cyberpunk Neon', creator: 'Mara Voss', image: 'photo-1519608487953-e999c86e7455', resolution: '4K', likes: 2841, color: 'Violet', swatch: '#8860bd', keywords: 'city night neon skyline purple' },
   { id: 'black-sun', title: 'Black Sun', category: 'AMOLED Deep Black', creator: 'Noah Kim', image: 'photo-1500530855697-b586d89ba3ee', resolution: '4K', likes: 1926, color: 'Midnight', swatch: '#151a20', keywords: 'dark sky mountain night black' },
   { id: 'still-form', title: 'Still Form 02', category: 'Minimalist', creator: 'Studio Morrow', image: 'photo-1500534623283-312aade485b7', resolution: '4K', likes: 1487, color: 'Sand', swatch: '#c8b697', keywords: 'minimal mountain landscape neutral' },
@@ -69,6 +83,43 @@ const wallpapers: Wallpaper[] = [
   { id: 'glass-garden', title: 'Glass Garden', category: 'Abstract 3D', creator: 'Niko Sato', image: 'photo-1500530855697-b586d89ba3ee', resolution: '4K', likes: 1137, color: 'Moss', swatch: '#687353', keywords: 'abstract glass forest moss' },
   { id: 'first-light', title: 'First Light', category: 'Nature', creator: 'Ari Lane', image: 'photo-1464822759023-fed622ff2c3b', resolution: '4K', likes: 2219, color: 'Amber', swatch: '#bd8754', keywords: 'mountain sunrise amber nature' },
 ];
+
+const allowedImageTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif'];
+const maxImageSize = 20 * 1024 * 1024;
+const uploadTypeByExtension: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  gif: 'image/gif',
+};
+
+function uploadedWallpaper(item: WallpaperItem): Wallpaper {
+  const shades = [
+    { color: 'Violet', swatch: '#8860bd' },
+    { color: 'Ocean', swatch: '#537e9a' },
+    { color: 'Moss', swatch: '#687353' },
+    { color: 'Sand', swatch: '#c8b697' },
+    { color: 'Amber', swatch: '#bd8754' },
+    { color: 'Coral', swatch: '#e28b78' },
+  ];
+  const shade = shades[item.title.length % shades.length];
+  const validCategory = categories.find((category) => category === item.category) ?? 'Abstract 3D';
+  return {
+    id: `uploaded-${item.id}`,
+    title: item.title,
+    category: validCategory,
+    creator: item.creatorName || 'AuraWalls member',
+    image: '',
+    imageUrl: item.imageUrl,
+    resolution: 'Original',
+    likes: 0,
+    color: shade.color,
+    swatch: shade.swatch,
+    keywords: item.tags.join(' '),
+  };
+}
 
 const palette = [
   { name: 'Midnight', hex: '#151a20' },
@@ -100,6 +151,11 @@ function readStorage(key: string): string[] {
 }
 
 function App() {
+  const { isAuthenticated, login } = useAuth();
+  const queryClient = useQueryClient();
+  const wallpaperQuery = useListWallpapers();
+  const requestUpload = useRequestUploadUrl();
+  const createWallpaper = useCreateWallpaper();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Category | 'All'>('All');
   const [activeNav, setActiveNav] = useState<'Explore' | 'Saved' | 'Liked'>('Explore');
@@ -114,8 +170,22 @@ function App() {
   const [now, setNow] = useState(new Date());
   const [battery, setBattery] = useState(87);
   const [toast, setToast] = useState('');
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadTitle, setUploadTitle] = useState('');
+  const [uploadCategory, setUploadCategory] = useState<Category | ''>('');
+  const [uploadTags, setUploadTags] = useState('');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadPreview, setUploadPreview] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState('');
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadFieldErrors, setUploadFieldErrors] = useState<Record<string, string>>({});
   const audioRef = useRef<{ context: AudioContext; nodes: OscillatorNode[]; gain: GainNode } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
+  const allWallpapers = useMemo(
+    () => [...(wallpaperQuery.data ?? []).map(uploadedWallpaper), ...sampleWallpapers],
+    [wallpaperQuery.data],
+  );
 
   useEffect(() => {
     try { localStorage.setItem('aurawalls-liked', JSON.stringify(liked)); } catch { /* Storage can be unavailable in private mode. */ }
@@ -123,6 +193,15 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem('aurawalls-saved', JSON.stringify(saved)); } catch { /* Storage can be unavailable in private mode. */ }
   }, [saved]);
+  useEffect(() => {
+    if (!uploadFile) {
+      setUploadPreview('');
+      return;
+    }
+    const url = URL.createObjectURL(uploadFile);
+    setUploadPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [uploadFile]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
@@ -156,7 +235,7 @@ function App() {
   }, []);
 
   const filtered = useMemo(() => {
-    let results = wallpapers.filter((wallpaper) => {
+    let results = allWallpapers.filter((wallpaper) => {
       const matchesCategory = category === 'All' || wallpaper.category === category;
       const matchesColor = !selectedColor || wallpaper.color === selectedColor;
       const matchesQuery = `${wallpaper.title} ${wallpaper.category} ${wallpaper.creator} ${wallpaper.keywords}`.toLowerCase().includes(query.toLowerCase().trim());
@@ -170,7 +249,7 @@ function App() {
     if (sort === 'popular') results = [...results].sort((a, b) => b.likes + (liked.includes(b.id) ? 1 : 0) - (a.likes + (liked.includes(a.id) ? 1 : 0)));
     if (sort === 'title') results = [...results].sort((a, b) => a.title.localeCompare(b.title));
     return results;
-  }, [activeNav, category, liked, query, saved, selectedColor, sort]);
+  }, [activeNav, allWallpapers, category, liked, query, saved, selectedColor, sort]);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -232,7 +311,7 @@ function App() {
 
   const downloadWallpaper = async () => {
     if (!selected) return;
-    const source = `https://images.unsplash.com/${selected.image}?auto=format&fit=crop&w=1600&q=90`;
+    const source = imageUrl(selected, 1600);
     const image = new Image();
     image.crossOrigin = 'anonymous';
     image.onload = () => {
@@ -297,8 +376,126 @@ function App() {
 
   const currentTime = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const currentDate = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
-  const featured = wallpapers[0];
-  const imageUrl = (wallpaper: Wallpaper, width = 800) => `https://images.unsplash.com/${wallpaper.image}?auto=format&fit=crop&w=${width}&q=85`;
+  const featured = sampleWallpapers[0];
+  const imageUrl = (wallpaper: Wallpaper, width = 800) => wallpaper.imageUrl || `https://images.unsplash.com/${wallpaper.image}?auto=format&fit=crop&w=${width}&q=85`;
+
+  const resetUploadForm = () => {
+    setUploadTitle('');
+    setUploadCategory('');
+    setUploadTags('');
+    setUploadFile(null);
+    setUploadProgress(0);
+    setUploadError('');
+    setUploadFieldErrors({});
+  };
+
+  const dismissUpload = () => {
+    if (uploadBusy) return;
+    setUploadOpen(false);
+    resetUploadForm();
+  };
+
+  useEffect(() => {
+    if (!uploadOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !uploadBusy) dismissUpload();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [uploadOpen, uploadBusy]);
+
+  const beginUpload = () => {
+    if (!isAuthenticated) {
+      login();
+      return;
+    }
+    resetUploadForm();
+    setUploadOpen(true);
+  };
+
+  const selectUploadFile = (file?: File) => {
+    if (!file) return;
+    const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+    const contentType = file.type || uploadTypeByExtension[extension] || '';
+    if (!allowedImageTypes.includes(contentType)) {
+      setUploadFile(null);
+      setUploadError('Choose a JPEG, PNG, WebP, AVIF, or GIF image.');
+      return;
+    }
+    if (file.size > maxImageSize) {
+      setUploadFile(null);
+      setUploadError('This image is larger than 20 MB. Choose a smaller file.');
+      return;
+    }
+    setUploadError('');
+    setUploadFieldErrors((errors) => ({ ...errors, image: '' }));
+    setUploadFile(file);
+  };
+
+  const submitUpload = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const tags = uploadTags.split(',').map((tag) => tag.trim()).filter(Boolean);
+    const errors: Record<string, string> = {};
+    if (!uploadTitle.trim()) errors.title = 'Give this atmosphere a title.';
+    else if (uploadTitle.trim().length > 80) errors.title = 'Keep the title under 80 characters.';
+    if (!uploadCategory) errors.category = 'Choose a category for your wallpaper.';
+    if (!tags.length) errors.tags = 'Add at least one tag, separated by commas.';
+    else if (tags.length > 12 || tags.some((tag) => tag.length > 32)) errors.tags = 'Use up to 12 tags, each 32 characters or fewer.';
+    if (!uploadFile) errors.image = 'Choose an image to continue.';
+    setUploadFieldErrors(errors);
+    setUploadError('');
+    if (Object.keys(errors).length) return;
+    if (!uploadFile || !uploadCategory) return;
+
+    const extension = uploadFile.name.split('.').pop()?.toLowerCase() ?? '';
+    const contentType = uploadFile.type || uploadTypeByExtension[extension];
+    if (!contentType) return;
+    setUploadBusy(true);
+    setUploadProgress(0);
+    try {
+      const signedUpload = await requestUpload.mutateAsync({
+        data: { name: uploadFile.name, size: uploadFile.size, contentType },
+      });
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', signedUpload.uploadURL);
+        xhr.setRequestHeader('Content-Type', contentType);
+        xhr.upload.onprogress = (progressEvent) => {
+          if (progressEvent.lengthComputable) {
+            setUploadProgress(Math.min(99, Math.round((progressEvent.loaded / progressEvent.total) * 100)));
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error('The image could not be stored. Please try again.'));
+        };
+        xhr.onerror = () => reject(new Error('The upload was interrupted. Check your connection and try again.'));
+        xhr.onabort = () => reject(new Error('The upload was cancelled.'));
+        xhr.send(uploadFile);
+      });
+      setUploadProgress(100);
+      await createWallpaper.mutateAsync({
+        data: {
+          title: uploadTitle.trim(),
+          category: uploadCategory,
+          tags,
+          objectPath: signedUpload.objectPath,
+        },
+      });
+      await queryClient.invalidateQueries({ queryKey: getListWallpapersQueryKey() });
+      await queryClient.refetchQueries({ queryKey: getListWallpapersQueryKey(), type: 'active' });
+      setUploadOpen(false);
+      resetUploadForm();
+      setActiveNav('Explore');
+      setCategory('All');
+      setSelectedColor(null);
+      showToast('Your wallpaper is now part of the collection');
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Something went wrong while publishing. Please try again.');
+    } finally {
+      setUploadBusy(false);
+    }
+  };
 
   return (
     <main className="aw-app">
@@ -314,6 +511,9 @@ function App() {
             <button data-testid="nav-categories" onClick={() => document.getElementById('gallery')?.scrollIntoView({ behavior: 'smooth' })}>Categories</button>
           </nav>
           <div className="aw-header-right">
+            <button className="aw-header-btn aw-upload-trigger" data-testid="button-admin-upload" onClick={beginUpload}>
+              <CloudUpload size={15} /> Admin Upload
+            </button>
             <button className="aw-header-btn" data-testid="button-liked-wallpapers" onClick={() => { setActiveNav(activeNav === 'Liked' ? 'Explore' : 'Liked'); setCategory('All'); }} aria-label="Liked wallpapers">
               <Heart size={15} /> {liked.length ? `${liked.length} liked` : 'Likes'}
             </button>
@@ -330,7 +530,7 @@ function App() {
               <button className="aw-text-action" data-testid="button-featured-preview" onClick={() => openPreview(featured)}><Maximize2 size={13} /> View featured</button>
             </div>
             <div className="aw-stat-line">
-              <div className="aw-stat"><strong data-testid="text-wallpaper-count">16</strong> considered images</div>
+              <div className="aw-stat"><strong data-testid="text-wallpaper-count">{allWallpapers.length}</strong> considered images</div>
               <div className="aw-stat"><strong data-testid="text-resolution">4K</strong> detail, always</div>
               <div className="aw-stat"><strong data-testid="text-free-label">Free</strong> to make yours</div>
             </div>
@@ -368,11 +568,22 @@ function App() {
               </label>
             </div>
           </div>
+          {wallpaperQuery.isLoading && (
+            <div className="aw-gallery-state aw-gallery-loading" role="status" data-testid="status-wallpapers-loading">
+              <span className="aw-skeleton-line" /><span>Gathering the community collection</span>
+            </div>
+          )}
+          {wallpaperQuery.isError && (
+            <div className="aw-gallery-state aw-gallery-error" role="alert" data-testid="status-wallpapers-error">
+              <span>Community uploads could not be reached. The curated gallery is still here.</span>
+              <button type="button" onClick={() => void wallpaperQuery.refetch()} data-testid="button-retry-wallpapers">Retry</button>
+            </div>
+          )}
           <div className="aw-categories" role="group" aria-label="Wallpaper categories">
-            <button className={`aw-chip ${category === 'All' ? 'selected' : ''}`} onClick={() => setCategory('All')} data-testid="filter-category-all">All walls <span className="aw-chip-count">{wallpapers.length}</span></button>
+            <button className={`aw-chip ${category === 'All' ? 'selected' : ''}`} onClick={() => setCategory('All')} data-testid="filter-category-all">All walls <span className="aw-chip-count">{allWallpapers.length}</span></button>
             {categories.map((item) => (
               <button key={item} className={`aw-chip ${category === item ? 'selected' : ''}`} onClick={() => setCategory(category === item ? 'All' : item)} data-testid={`filter-category-${item.toLowerCase().replaceAll(' ', '-')}`}>
-                {item}<span className="aw-chip-count">{wallpapers.filter((wallpaper) => wallpaper.category === item).length}</span>
+                {item}<span className="aw-chip-count">{allWallpapers.filter((wallpaper) => wallpaper.category === item).length}</span>
               </button>
             ))}
           </div>
@@ -447,6 +658,168 @@ function App() {
         </footer>
       </div>
 
+      {uploadOpen && (
+        <div
+          className="aw-modal-backdrop aw-upload-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) dismissUpload();
+          }}
+          data-testid="admin-upload-overlay"
+        >
+          <section className="aw-upload-modal" role="dialog" aria-modal="true" aria-labelledby="upload-title" data-testid="admin-upload-modal">
+            <div className="aw-upload-art">
+              {uploadPreview ? (
+                <img src={uploadPreview} alt="Selected wallpaper preview" data-testid="img-upload-preview" />
+              ) : (
+                <div className="aw-upload-art-empty">
+                  <span className="aw-upload-art-mark"><ImageIcon size={21} /></span>
+                  <span>Make room for a new atmosphere</span>
+                  <small>Your original, in the gallery</small>
+                </div>
+              )}
+              <div className="aw-upload-art-caption">
+                <span>COMMUNITY WALLPAPER</span>
+                <strong>{uploadTitle.trim() || 'A new point of view'}</strong>
+              </div>
+            </div>
+            <div className="aw-upload-form-panel">
+              <div className="aw-upload-heading">
+                <div>
+                  <div className="aw-modal-kicker">Share a frame</div>
+                  <h2 id="upload-title">Admin Upload</h2>
+                  <p>Add an original wallpaper to the AuraWalls collection.</p>
+                </div>
+                <button
+                  className="aw-close"
+                  type="button"
+                  aria-label="Close upload form"
+                  disabled={uploadBusy}
+                  onClick={dismissUpload}
+                  data-testid="button-close-upload"
+                >
+                  <X size={17} />
+                </button>
+              </div>
+              <div className="aw-modal-rule" />
+              <form className="aw-upload-form" onSubmit={(event) => void submitUpload(event)} noValidate>
+                <div className="aw-form-field">
+                  <label htmlFor="upload-wallpaper-title">Title <span>Required</span></label>
+                  <input
+                    id="upload-wallpaper-title"
+                    type="text"
+                    value={uploadTitle}
+                    maxLength={80}
+                    placeholder="Name this atmosphere"
+                    onChange={(event) => {
+                      setUploadTitle(event.target.value);
+                      setUploadFieldErrors((errors) => ({ ...errors, title: '' }));
+                    }}
+                    aria-invalid={Boolean(uploadFieldErrors.title)}
+                    data-testid="input-upload-title"
+                  />
+                  {uploadFieldErrors.title && <small className="aw-field-error" data-testid="error-upload-title">{uploadFieldErrors.title}</small>}
+                </div>
+                <div className="aw-form-field">
+                  <label htmlFor="upload-wallpaper-category">Category <span>Required</span></label>
+                  <select
+                    id="upload-wallpaper-category"
+                    value={uploadCategory}
+                    onChange={(event) => {
+                      setUploadCategory(event.target.value as Category | '');
+                      setUploadFieldErrors((errors) => ({ ...errors, category: '' }));
+                    }}
+                    aria-invalid={Boolean(uploadFieldErrors.category)}
+                    data-testid="select-upload-category"
+                  >
+                    <option value="">Choose a category</option>
+                    {categories.map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                  {uploadFieldErrors.category && <small className="aw-field-error" data-testid="error-upload-category">{uploadFieldErrors.category}</small>}
+                </div>
+                <div className="aw-form-field">
+                  <label htmlFor="upload-wallpaper-tags">Tags <span>Separate with commas</span></label>
+                  <input
+                    id="upload-wallpaper-tags"
+                    type="text"
+                    value={uploadTags}
+                    placeholder="e.g. dusk, grain, quiet"
+                    onChange={(event) => {
+                      setUploadTags(event.target.value);
+                      setUploadFieldErrors((errors) => ({ ...errors, tags: '' }));
+                    }}
+                    aria-invalid={Boolean(uploadFieldErrors.tags)}
+                    data-testid="input-upload-tags"
+                  />
+                  {uploadFieldErrors.tags && <small className="aw-field-error" data-testid="error-upload-tags">{uploadFieldErrors.tags}</small>}
+                </div>
+                <div className="aw-form-field">
+                  <div className="aw-file-label-row">
+                    <label htmlFor="upload-wallpaper-image">Original image <span>Up to 20 MB</span></label>
+                    {uploadFile && <span className="aw-file-size" data-testid="text-upload-file-size">{(uploadFile.size / (1024 * 1024)).toFixed(1)} MB</span>}
+                  </div>
+                  <div className="aw-file-drop-row">
+                    <label className={`aw-file-drop ${uploadFile ? 'has-file' : ''}`} htmlFor="upload-wallpaper-image" data-testid="label-upload-image">
+                      <input
+                        id="upload-wallpaper-image"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/avif,image/gif"
+                        disabled={uploadBusy}
+                        onChange={(event) => {
+                          selectUploadFile(event.target.files?.[0]);
+                          event.currentTarget.value = '';
+                        }}
+                        data-testid="input-upload-image"
+                      />
+                      <span className="aw-file-icon"><Upload size={15} /></span>
+                      <span className="aw-file-copy">
+                        <strong>{uploadFile ? uploadFile.name : 'Choose an image from your device'}</strong>
+                        <small>{uploadFile ? 'Select another file to replace it' : 'JPEG, PNG, WebP, AVIF, or GIF'}</small>
+                      </span>
+                    </label>
+                    {uploadFile && (
+                      <button
+                        className="aw-remove-file"
+                        type="button"
+                        disabled={uploadBusy}
+                        aria-label="Remove selected image"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setUploadFile(null);
+                          setUploadError('');
+                        }}
+                        data-testid="button-remove-upload-image"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                  {uploadFieldErrors.image && <small className="aw-field-error" data-testid="error-upload-image">{uploadFieldErrors.image}</small>}
+                </div>
+                {uploadBusy && (
+                  <div className="aw-upload-progress" role="status" aria-live="polite" data-testid="status-upload-progress">
+                    <div className="aw-upload-progress-label">
+                      <span>{uploadProgress >= 100 ? 'Publishing to the collection' : 'Uploading your original'}</span>
+                      <span>{uploadProgress}%</span>
+                    </div>
+                    <div className="aw-progress-track" role="progressbar" aria-valuenow={uploadProgress} aria-valuemin={0} aria-valuemax={100}>
+                      <span style={{ transform: `scaleX(${uploadProgress / 100})` }} />
+                    </div>
+                  </div>
+                )}
+                {uploadError && <div className="aw-upload-error" role="alert" data-testid="error-upload-submit">{uploadError}</div>}
+                <div className="aw-upload-footer">
+                  <span><CloudUpload size={13} /> Shared across devices</span>
+                  <button className="aw-primary aw-publish-button" type="submit" disabled={uploadBusy} data-testid="button-publish-wallpaper">
+                    {uploadBusy ? <><LoaderCircle size={14} className="aw-spinning" /> Publishing</> : <>Publish wallpaper <ArrowRight size={14} /></>}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </section>
+        </div>
+      )}
       {selected && (
         <div className="aw-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }} data-testid="wallpaper-preview-overlay">
           <section className="aw-modal" role="dialog" aria-modal="true" aria-labelledby="preview-title" data-testid="wallpaper-preview-modal">
