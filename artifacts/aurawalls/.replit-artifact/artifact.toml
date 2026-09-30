@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "AuraWalls"
+description = "A dark luxury wallpaper discovery app with interactive device previews, smart category and color search, image adjustments, favorites, ambient sound, and multi-format downloads."
+version = "1.0.0"
+id = "artifacts/aurawalls"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24496
+
+[services.development]
+run = "pnpm --filter @workspace/aurawalls run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/aurawalls", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/aurawalls/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24496"
+BASE_PATH = "/"
