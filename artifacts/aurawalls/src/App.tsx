@@ -105,7 +105,7 @@ function uploadedWallpaper(item: WallpaperItem): Wallpaper {
     { color: 'Amber', swatch: '#bd8754' },
     { color: 'Coral', swatch: '#e28b78' },
   ];
-  const shade = shades[item.title.length % shades.length];
+  const shade = shades[(item.title || '').length % shades.length];
   const validCategory = categories.find((category) => category === item.category) ?? 'Abstract 3D';
   return {
     id: `uploaded-${item.id}`,
@@ -118,7 +118,7 @@ function uploadedWallpaper(item: WallpaperItem): Wallpaper {
     likes: 0,
     color: shade.color,
     swatch: shade.swatch,
-    keywords: item.tags.join(' '),
+    keywords: Array.isArray(item.tags) ? item.tags.join(' ') : '',
   };
 }
 
@@ -183,10 +183,16 @@ function App() {
   const [uploadFieldErrors, setUploadFieldErrors] = useState<Record<string, string>>({});
   const audioRef = useRef<{ context: AudioContext; nodes: OscillatorNode[]; gain: GainNode } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
-  const allWallpapers = useMemo(
-    () => [...(wallpaperQuery.data ?? []).map(uploadedWallpaper), ...sampleWallpapers],
-    [wallpaperQuery.data],
-  );
+
+  // මෙතැනදී Array.isArray පරීක්ෂාව යොදා crash වීම සම්පූර්ණයෙන්ම වළක්වා ඇත:
+  const allWallpapers = useMemo(() => {
+    const apiData = Array.isArray(wallpaperQuery.data)
+      ? wallpaperQuery.data
+      : (wallpaperQuery.data && typeof wallpaperQuery.data === 'object' && Array.isArray((wallpaperQuery.data as any).data))
+        ? (wallpaperQuery.data as any).data
+        : [];
+    return [...apiData.map(uploadedWallpaper), ...sampleWallpapers];
+  }, [wallpaperQuery.data]);
 
   useEffect(() => {
     try { localStorage.setItem('aurawalls-liked', JSON.stringify(liked)); } catch { /* Storage can be unavailable in private mode. */ }
